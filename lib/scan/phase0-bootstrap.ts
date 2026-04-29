@@ -11,7 +11,12 @@ export async function runPhase0(
 ): Promise<number> {
   await db.from('scan_jobs').update({ current_action: 'Enumerating projects…' }).eq('id', jobId);
 
-  const projects = await withRetry(() => listAllProjects(accountId, token));
+  const allProjects = await withRetry(() => listAllProjects(accountId, token));
+
+  // Skip archived/inactive projects — only scan active ones
+  const projects = allProjects.filter(p =>
+    !p.status || p.status.toLowerCase() === 'active'
+  );
 
   const rows = projects.map(p => ({
     scan_job_id: jobId,
@@ -35,7 +40,7 @@ export async function runPhase0(
     phase: 'projects',
     phase_0_cursor: 'done',
     overall_pct: 5,
-    current_action: `Found ${projects.length} projects. Enriching…`,
+    current_action: `Found ${projects.length} active projects (${allProjects.length - projects.length} archived skipped). Enriching…`,
     updated_at: new Date().toISOString(),
   }).eq('id', jobId);
 
