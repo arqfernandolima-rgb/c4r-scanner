@@ -27,24 +27,30 @@ export async function exchangeCodeForToken(code: string, verifier: string): Prom
   expires_in: number;
   token_type: string;
 }> {
+  // Confidential client: send credentials as Basic Auth header, code_verifier in body
+  const credentials = Buffer.from(
+    `${process.env.APS_CLIENT_ID!}:${process.env.APS_CLIENT_SECRET!}`
+  ).toString('base64');
+
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
     code,
-    client_id: process.env.APS_CLIENT_ID!,
-    client_secret: process.env.APS_CLIENT_SECRET!,
     code_verifier: verifier,
     redirect_uri: process.env.APS_CALLBACK_URL!,
   });
 
   const res = await fetch(`${APS_AUTH_URL}/token`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Authorization': `Basic ${credentials}`,
+    },
     body,
   });
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Token exchange failed: ${err}`);
+    throw new Error(`Token exchange failed (${res.status}): ${err}`);
   }
   return res.json();
 }
@@ -59,10 +65,14 @@ export async function getUserInfo(token: string): Promise<{
   email: string;
   userId: string;
 }> {
-  const res = await fetch('https://developer.api.autodesk.com/oidc/userinfo', {
+  const res = await fetch('https://developer.api.autodesk.com/profile/v2/userinfo', {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (!res.ok) throw Object.assign(new Error('Failed to fetch user info'), { status: res.status });
+  if (!res.ok) {
+    const body = await res.text();
+    console.error(`getUserInfo failed ${res.status}:`, body);
+    throw Object.assign(new Error('Failed to fetch user info'), { status: res.status });
+  }
   const data = await res.json();
   return {
     name: `${data.given_name ?? ''} ${data.family_name ?? ''}`.trim() || (data.name ?? ''),
