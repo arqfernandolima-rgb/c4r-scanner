@@ -31,6 +31,7 @@ export async function exchangeCodeForToken(code: string, verifier: string): Prom
     grant_type: 'authorization_code',
     code,
     client_id: process.env.APS_CLIENT_ID!,
+    client_secret: process.env.APS_CLIENT_SECRET!,
     code_verifier: verifier,
     redirect_uri: process.env.APS_CALLBACK_URL!,
   });
