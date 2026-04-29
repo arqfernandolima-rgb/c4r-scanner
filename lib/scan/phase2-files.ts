@@ -149,14 +149,19 @@ export async function runPhase2Batch(
         await db.from('projects').update({ scan_status: 'scanning' }).eq('id', p.id);
 
         try {
-          const topFolders = await withRetry(() => getTopFolders(hubId, p.acc_project_id, token));
+          // DM API requires the `b.` prefix; Admin API returns plain UUIDs
+          const dmProjectId = p.acc_project_id.startsWith('b.')
+            ? p.acc_project_id
+            : `b.${p.acc_project_id}`;
+
+          const topFolders = await withRetry(() => getTopFolders(hubId, dmProjectId, token));
           const files: RevitFileRow[] = [];
 
           await Promise.all(
             topFolders.map(folder =>
               limits.phase2(() =>
                 traverseFolder(
-                  p.acc_project_id,
+                  dmProjectId,
                   folder.id,
                   `/${folder.attributes.displayName}`,
                   token,
