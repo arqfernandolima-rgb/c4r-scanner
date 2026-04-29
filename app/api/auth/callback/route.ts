@@ -36,7 +36,8 @@ export async function GET(req: NextRequest) {
     response.cookies.delete('pkce_state');
 
     return response;
-  } catch {
-    return NextResponse.redirect(new URL('/?error=token_exchange_failed', req.url));
+  } catch (err) {
+    const msg = encodeURIComponent(String(err));
+    return NextResponse.redirect(new URL(`/?error=${msg}`, req.url));
   }
 }

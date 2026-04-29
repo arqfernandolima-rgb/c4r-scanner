@@ -10,10 +10,11 @@ export async function GET() {
     const user = await getUserInfo(token);
     return NextResponse.json(user);
   } catch (err: unknown) {
+    console.error('[auth/me] getUserInfo error:', err);
     const status = (err as { status?: number }).status;
     if (status === 401 || status === 403) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    return NextResponse.json({ error: 'Failed to fetch user info' }, { status: 500 });
+    return NextResponse.json({ error: String(err), status }, { status: 500 });
   }
 }
