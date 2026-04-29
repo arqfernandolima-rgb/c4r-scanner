@@ -11,12 +11,18 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const version = process.env.NEXT_PUBLIC_APP_VERSION ?? '?';
+  const sha = process.env.NEXT_PUBLIC_BUILD_SHA ?? 'dev';
+
   return (
     <html lang="en">
       <body className={`${inter.className} bg-background text-foreground antialiased`}>
         <TooltipProvider>
           {children}
         </TooltipProvider>
+        <div className="fixed bottom-2 right-3 text-[10px] text-muted-foreground/40 tabular-nums select-none pointer-events-none z-50">
+          v{version} · {sha}
+        </div>
       </body>
     </html>
   );
