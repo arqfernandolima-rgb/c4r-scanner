@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { APP_VERSION } from '@/lib/version';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -11,8 +12,9 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  const version = process.env.NEXT_PUBLIC_APP_VERSION ?? '?';
-  const sha = process.env.NEXT_PUBLIC_BUILD_SHA ?? 'dev';
+  const version = APP_VERSION;
+  // VERCEL_GIT_COMMIT_SHA is available server-side without needing NEXT_PUBLIC_
+  const sha = (process.env.VERCEL_GIT_COMMIT_SHA ?? '').slice(0, 7) || 'dev';
 
   return (
     <html lang="en">
