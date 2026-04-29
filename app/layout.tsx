@@ -20,7 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <TooltipProvider>
           {children}
         </TooltipProvider>
-        <div className="fixed bottom-2 right-3 text-[10px] text-muted-foreground/40 tabular-nums select-none pointer-events-none z-50">
+        <div className="fixed top-2 right-3 text-[10px] text-muted-foreground/40 tabular-nums select-none pointer-events-none z-50">
           v{version} · {sha}
         </div>
       </body>

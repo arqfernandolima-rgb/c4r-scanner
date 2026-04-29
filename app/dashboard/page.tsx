@@ -41,6 +41,8 @@ interface ScanJob {
   current_action: string | null;
   overall_pct: number;
   completed_at: string | null;
+  started_at: string | null;
+  created_at: string;
   total_projects: number;
   scanned_projects: number;
   total_rvt_files: number;
@@ -48,6 +50,7 @@ interface ScanJob {
   versions_detected: number;
   rate_limit_hits: number;
   eta_seconds: number | null;
+  error_message: string | null;
 }
 
 interface TrendPoint { label: string; atRisk: number; cleared: number; }
@@ -79,21 +82,34 @@ function relativeTime(dateStr: string | null): string {
   return `${Math.floor(days / 365)}y ago`;
 }
 
+function duration(start: string | null, end: string | null): string {
+  if (!start || !end) return '—';
+  const secs = Math.round((new Date(end).getTime() - new Date(start).getTime()) / 1000);
+  if (secs < 60) return `${secs}s`;
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+  return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const [projects, setProjects] = useState<Project[]>([]);
   const [job, setJob] = useState<ScanJob | null>(null);
+  const [history, setHistory] = useState<ScanJob[]>([]);
   const [trendData, setTrendData] = useState<TrendPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterRisk, setFilterRisk] = useState('all');
   const [filterType, setFilterType] = useState('all');
   const [staleWarning, setStaleWarning] = useState(false);
   const [scanDetailOpen, setScanDetailOpen] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const [hubId, setHubId] = useState('');
 
   useEffect(() => {
     const hubRaw = localStorage.getItem('selected_hub');
     if (!hubRaw) { router.replace('/'); return; }
     const hub = JSON.parse(hubRaw);
+    setHubId(hub.id);
 
     fetch(`/api/projects?hubId=${hub.id}`)
       .then(r => r.json())
@@ -116,42 +132,36 @@ export default function DashboardPage() {
       .finally(() => setLoading(false));
 
     fetch(`/api/scan/history?hubId=${hub.id}`)
-      .then(r => r.ok ? r.json() : { jobs: [] })
-      .then(data => setTrendData(data.trendData ?? []));
+      .then(r => r.ok ? r.json() : { jobs: [], trendData: [] })
+      .then(data => {
+        setHistory(data.jobs ?? []);
+        setTrendData(data.trendData ?? []);
+      });
   }, []);
 
-  // Realtime: update job progress and project list while a scan is running
+  // Realtime: job progress + project list while scanning
   useEffect(() => {
     if (!job?.id || job.status === 'completed' || job.status === 'failed') return;
 
     const jobChannel = supabase
       .channel('dashboard-job')
-      .on(
-        'postgres_changes',
+      .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'scan_jobs', filter: `id=eq.${job.id}` },
-        (payload) => {
-          setJob(prev => prev ? { ...prev, ...(payload.new as Partial<ScanJob>) } : prev);
-        }
+        (payload) => setJob(prev => prev ? { ...prev, ...(payload.new as Partial<ScanJob>) } : prev)
       )
       .subscribe();
 
     const projectsChannel = supabase
       .channel('dashboard-projects')
-      .on(
-        'postgres_changes',
+      .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'projects', filter: `scan_job_id=eq.${job.id}` },
-        (payload) => {
-          setProjects(prev => [...prev, payload.new as Project]);
-        }
+        (payload) => setProjects(prev => [...prev, payload.new as Project])
       )
-      .on(
-        'postgres_changes',
+      .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'projects', filter: `scan_job_id=eq.${job.id}` },
-        (payload) => {
-          setProjects(prev =>
-            prev.map(p => p.id === (payload.new as Project).id ? { ...p, ...(payload.new as Project) } : p)
-          );
-        }
+        (payload) => setProjects(prev =>
+          prev.map(p => p.id === (payload.new as Project).id ? { ...p, ...(payload.new as Project) } : p)
+        )
       )
       .subscribe();
 
@@ -160,6 +170,24 @@ export default function DashboardPage() {
       supabase.removeChannel(projectsChannel);
     };
   }, [job?.id, job?.status]);
+
+  const handleDeleteScan = async (jobId: string) => {
+    if (!confirm('Delete this scan and all its project data? This cannot be undone.')) return;
+    setDeletingId(jobId);
+    const res = await fetch(`/api/scan/${jobId}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.error) {
+      alert(data.error);
+    } else {
+      setHistory(prev => prev.filter(j => j.id !== jobId));
+      // If we deleted the current job, clear it
+      if (job?.id === jobId) {
+        setJob(null);
+        setProjects([]);
+      }
+    }
+    setDeletingId(null);
+  };
 
   const isScanning = !!job && job.status !== 'completed' && job.status !== 'failed' && !job.completed_at;
 
@@ -229,36 +257,25 @@ export default function DashboardPage() {
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
                   </span>
-                  <span className="text-xs font-medium text-primary uppercase tracking-wide">
-                    Scan running
-                  </span>
+                  <span className="text-xs font-medium text-primary uppercase tracking-wide">Scan running</span>
                   <span className="text-xs text-muted-foreground">·</span>
                   <span className="text-xs text-muted-foreground capitalize">{job?.phase} phase</span>
                   {job?.eta_seconds != null && (
                     <>
                       <span className="text-xs text-muted-foreground">·</span>
-                      <span className="text-xs text-muted-foreground">
-                        ~{Math.ceil(job.eta_seconds / 60)} min remaining
-                      </span>
+                      <span className="text-xs text-muted-foreground">~{Math.ceil(job.eta_seconds / 60)} min remaining</span>
                     </>
                   )}
                 </div>
                 <div className="h-1.5 w-full rounded-full bg-primary/20 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-primary transition-all duration-700"
-                    style={{ width: `${job?.overall_pct ?? 0}%` }}
-                  />
+                  <div className="h-full rounded-full bg-primary transition-all duration-700" style={{ width: `${job?.overall_pct ?? 0}%` }} />
                 </div>
-                <p className="text-xs text-muted-foreground mt-1.5 truncate">
-                  {job?.current_action ?? 'Initializing…'}
-                </p>
+                <p className="text-xs text-muted-foreground mt-1.5 truncate">{job?.current_action ?? 'Initializing…'}</p>
               </div>
               <div className="shrink-0 flex items-center gap-3">
                 <div className="text-right hidden sm:block">
                   <div className="text-lg font-semibold tabular-nums">{job?.overall_pct ?? 0}%</div>
-                  <div className="text-xs text-muted-foreground">
-                    {job?.scanned_projects ?? 0}/{job?.total_projects ?? 0} projects
-                  </div>
+                  <div className="text-xs text-muted-foreground">{job?.scanned_projects ?? 0}/{job?.total_projects ?? 0} projects</div>
                 </div>
                 <span className="text-xs text-primary font-medium">Details →</span>
               </div>
@@ -266,7 +283,6 @@ export default function DashboardPage() {
           </button>
         )}
 
-        {/* Stale scan warning */}
         {staleWarning && (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
             Your last scan was over 7 days ago. Run a new scan to get up-to-date results.
@@ -275,33 +291,20 @@ export default function DashboardPage() {
 
         {/* KPI row */}
         <div className="grid grid-cols-4 gap-3">
-          <KpiCard
-            label="Projects at risk"
-            value={atRiskProjects.length}
+          <KpiCard label="Projects at risk" value={atRiskProjects.length}
             sub={`of ${projects.length} total · ${projects.length > 0 ? Math.round(atRiskProjects.length / projects.length * 100) : 0}%`}
-            variant={atRiskProjects.length > 0 ? 'danger' : 'default'}
-          />
-          <KpiCard
-            label="Files needing upgrade"
-            value={atRiskFiles}
+            variant={atRiskProjects.length > 0 ? 'danger' : 'default'} />
+          <KpiCard label="Files needing upgrade" value={atRiskFiles}
             sub={`of ${totalFiles.toLocaleString()} .rvt · ${totalFiles > 0 ? (atRiskFiles / totalFiles * 100).toFixed(1) : 0}%`}
-            variant={atRiskFiles > 0 ? 'warning' : 'default'}
-          />
-          <KpiCard
-            label="Members impacted"
-            value={membersImpacted}
-            sub="across at-risk projects"
-            variant="info"
-          />
-          <KpiCard
-            label="Days to deadline"
-            value={daysLeft}
+            variant={atRiskFiles > 0 ? 'warning' : 'default'} />
+          <KpiCard label="Members impacted" value={membersImpacted}
+            sub="across at-risk projects" variant="info" />
+          <KpiCard label="Days to deadline" value={daysLeft}
             sub={`${DEADLINE} cutoff`}
-            variant={daysLeft < 14 ? 'danger' : daysLeft < 30 ? 'warning' : 'default'}
-          />
+            variant={daysLeft < 14 ? 'danger' : daysLeft < 30 ? 'warning' : 'default'} />
         </div>
 
-        {/* Charts row */}
+        {/* Charts */}
         <div className="grid grid-cols-3 gap-4">
           <div className="col-span-2 rounded-lg border bg-card p-4">
             <div className="text-sm font-medium">Files at risk over time</div>
@@ -318,15 +321,12 @@ export default function DashboardPage() {
                 </LineChart>
               </ResponsiveContainer>
             ) : (
-              <div className="h-40 flex items-center justify-center text-sm text-muted-foreground">
-                Run multiple scans to see trend data.
-              </div>
+              <div className="h-40 flex items-center justify-center text-sm text-muted-foreground">Run multiple scans to see trend data.</div>
             )}
           </div>
-
           <div className="rounded-lg border bg-card p-4">
             <div className="text-sm font-medium">Version distribution</div>
-            <div className="text-xs text-muted-foreground mb-3">.rvt files by min version (at-risk projects)</div>
+            <div className="text-xs text-muted-foreground mb-3">.rvt files by min version</div>
             {versionData.length > 0 ? (
               <ResponsiveContainer width="100%" height={160}>
                 <BarChart data={versionData} layout="vertical">
@@ -335,39 +335,29 @@ export default function DashboardPage() {
                   <YAxis dataKey="version" type="category" tick={{ fontSize: 11, fontFamily: 'monospace' }} stroke="hsl(var(--border))" width={36} />
                   <Tooltip contentStyle={{ fontSize: 12 }} />
                   <Bar dataKey="count" radius={[0, 3, 3, 0]}>
-                    {versionData.map((entry) => (
-                      <Cell
-                        key={entry.version}
-                        fill={parseInt(entry.version) < DEPRECATED_BELOW ? '#E24B4A' : '#378ADD'}
-                      />
+                    {versionData.map(entry => (
+                      <Cell key={entry.version} fill={parseInt(entry.version) < DEPRECATED_BELOW ? '#E24B4A' : '#378ADD'} />
                     ))}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              <div className="h-40 flex items-center justify-center text-sm text-muted-foreground">
-                No data yet.
-              </div>
+              <div className="h-40 flex items-center justify-center text-sm text-muted-foreground">No data yet.</div>
             )}
           </div>
         </div>
 
-        {/* Filters + table */}
+        {/* Project table — scrollable fixed window */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
               Priority project list — sorted by risk score
-              {isScanning && (
-                <span className="ml-2 normal-case font-normal text-primary">
-                  · updating live
-                </span>
-              )}
+              {isScanning && <span className="ml-2 normal-case font-normal text-primary">· updating live</span>}
             </p>
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground tabular-nums">{filtered.length} of {projects.length}</span>
               <Select value={filterRisk} onValueChange={v => setFilterRisk(v ?? 'all')}>
-                <SelectTrigger className="h-7 text-xs w-28">
-                  <SelectValue placeholder="Risk" />
-                </SelectTrigger>
+                <SelectTrigger className="h-7 text-xs w-28"><SelectValue placeholder="Risk" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All risk</SelectItem>
                   <SelectItem value="high">High</SelectItem>
@@ -376,9 +366,7 @@ export default function DashboardPage() {
                 </SelectContent>
               </Select>
               <Select value={filterType} onValueChange={v => setFilterType(v ?? 'all')}>
-                <SelectTrigger className="h-7 text-xs w-28">
-                  <SelectValue placeholder="Type" />
-                </SelectTrigger>
+                <SelectTrigger className="h-7 text-xs w-28"><SelectValue placeholder="Type" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All types</SelectItem>
                   <SelectItem value="acc">ACC</SelectItem>
@@ -388,112 +376,159 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="rounded-lg border overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-muted/30 hover:bg-muted/30">
-                  <TableHead className="w-[28%]">Project</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Risk</TableHead>
-                  <TableHead>Priority</TableHead>
-                  <TableHead>Members</TableHead>
-                  <TableHead>.rvt at risk</TableHead>
-                  <TableHead>Min version</TableHead>
-                  <TableHead>Last active</TableHead>
-                  <TableHead></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={9} className="text-center text-sm text-muted-foreground py-12">
-                      {projects.length === 0
-                        ? isScanning
-                          ? 'Scan in progress — projects will appear here as they are discovered.'
-                          : 'No scan data. Run a scan to see results.'
-                        : 'No projects match filters.'}
-                    </TableCell>
+          <div className="rounded-lg border">
+            <div className="overflow-y-auto" style={{ maxHeight: '480px' }}>
+              <Table>
+                <TableHeader className="sticky top-0 z-10 bg-card shadow-[0_1px_0_0_hsl(var(--border))]">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="w-[28%]">Project</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Risk</TableHead>
+                    <TableHead>Priority</TableHead>
+                    <TableHead>Members</TableHead>
+                    <TableHead>.rvt at risk</TableHead>
+                    <TableHead>Min version</TableHead>
+                    <TableHead>Last active</TableHead>
+                    <TableHead></TableHead>
                   </TableRow>
-                )}
-                {filtered.map(p => {
-                  const risk = riskLevel(p);
-                  const isPending = p.scan_status === 'pending';
-                  return (
-                    <TableRow
-                      key={p.id}
-                      className={`cursor-pointer ${isPending ? 'opacity-50' : ''}`}
-                      onClick={() => !isPending && router.push(`/dashboard/${p.id}`)}
-                    >
-                      <TableCell className="font-medium text-sm">
-                        <div className="flex items-center gap-2">
-                          {isPending && (
-                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-muted-foreground/40 shrink-0" />
-                          )}
-                          {p.name}
-                          {p.has_composite_files && (
-                            <span title="Contains linked models" className="text-amber-500 text-xs">⚠</span>
-                          )}
-                        </div>
-                        {p.scan_status === 'error' && (
-                          <div className="text-xs text-destructive">{p.scan_error}</div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-xs text-muted-foreground">{p.project_type}</span>
-                      </TableCell>
-                      <TableCell>
-                        {isPending
-                          ? <span className="text-xs text-muted-foreground">—</span>
-                          : <RiskBadge risk={risk} />}
-                      </TableCell>
-                      <TableCell>
-                        <div className="text-sm font-medium">{isPending ? '—' : p.priority_score}</div>
-                        {!isPending && (
-                          <div className="mt-1 h-1 w-16 rounded-full bg-border overflow-hidden">
-                            <div
-                              className={`h-full rounded-full ${risk === 'High' ? 'bg-destructive' : risk === 'Medium' ? 'bg-amber-500' : 'bg-border'}`}
-                              style={{ width: `${p.priority_score}%` }}
-                            />
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm">{p.member_count || '—'}</TableCell>
-                      <TableCell className={`text-sm font-medium ${p.at_risk_file_count > 0 ? 'text-destructive' : 'text-muted-foreground'}`}>
-                        {isPending ? '—' : p.at_risk_file_count}
-                      </TableCell>
-                      <TableCell>
-                        {p.min_revit_version ? (
-                          <span className={`inline-block font-mono text-xs px-1.5 py-0.5 rounded ${
-                            parseInt(p.min_revit_version) < DEPRECATED_BELOW
-                              ? 'bg-destructive/10 text-destructive'
-                              : 'bg-green-100 text-green-700'
-                          }`}>
-                            {p.min_revit_version}
-                          </span>
-                        ) : <span className="text-muted-foreground text-xs">—</span>}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {relativeTime(p.last_file_activity)}
-                      </TableCell>
-                      <TableCell>
-                        {!isPending && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-6 text-xs"
-                            onClick={(e) => { e.stopPropagation(); router.push('/upgrade'); }}
-                          >
-                            Assign →
-                          </Button>
-                        )}
+                </TableHeader>
+                <TableBody>
+                  {filtered.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={9} className="text-center text-sm text-muted-foreground py-12">
+                        {projects.length === 0
+                          ? isScanning
+                            ? 'Scan in progress — projects will appear here as they are discovered.'
+                            : 'No scan data. Run a scan to see results.'
+                          : 'No projects match filters.'}
                       </TableCell>
                     </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+                  )}
+                  {filtered.map(p => {
+                    const risk = riskLevel(p);
+                    const isPending = p.scan_status === 'pending';
+                    return (
+                      <TableRow
+                        key={p.id}
+                        className={`cursor-pointer ${isPending ? 'opacity-50' : ''}`}
+                        onClick={() => !isPending && router.push(`/dashboard/${p.id}`)}
+                      >
+                        <TableCell className="font-medium text-sm">
+                          <div className="flex items-center gap-2">
+                            {isPending && <span className="inline-block w-1.5 h-1.5 rounded-full bg-muted-foreground/40 shrink-0" />}
+                            {p.name}
+                            {p.has_composite_files && <span title="Contains linked models" className="text-amber-500 text-xs">⚠</span>}
+                          </div>
+                          {p.scan_status === 'error' && <div className="text-xs text-destructive">{p.scan_error}</div>}
+                        </TableCell>
+                        <TableCell><span className="text-xs text-muted-foreground">{p.project_type}</span></TableCell>
+                        <TableCell>
+                          {isPending ? <span className="text-xs text-muted-foreground">—</span> : <RiskBadge risk={risk} />}
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-sm font-medium">{isPending ? '—' : p.priority_score}</div>
+                          {!isPending && (
+                            <div className="mt-1 h-1 w-16 rounded-full bg-border overflow-hidden">
+                              <div className={`h-full rounded-full ${risk === 'High' ? 'bg-destructive' : risk === 'Medium' ? 'bg-amber-500' : 'bg-border'}`}
+                                style={{ width: `${p.priority_score}%` }} />
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-sm">{p.member_count || '—'}</TableCell>
+                        <TableCell className={`text-sm font-medium ${p.at_risk_file_count > 0 ? 'text-destructive' : 'text-muted-foreground'}`}>
+                          {isPending ? '—' : p.at_risk_file_count}
+                        </TableCell>
+                        <TableCell>
+                          {p.min_revit_version
+                            ? <span className={`inline-block font-mono text-xs px-1.5 py-0.5 rounded ${parseInt(p.min_revit_version) < DEPRECATED_BELOW ? 'bg-destructive/10 text-destructive' : 'bg-green-100 text-green-700'}`}>{p.min_revit_version}</span>
+                            : <span className="text-muted-foreground text-xs">—</span>}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{relativeTime(p.last_file_activity)}</TableCell>
+                        <TableCell>
+                          {!isPending && (
+                            <Button size="sm" variant="outline" className="h-6 text-xs"
+                              onClick={e => { e.stopPropagation(); router.push('/upgrade'); }}>
+                              Assign →
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           </div>
         </div>
+
+        {/* Scan history */}
+        <div className="space-y-3">
+          <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Scan history</p>
+          <div className="rounded-lg border">
+            <div className="overflow-y-auto" style={{ maxHeight: '280px' }}>
+              <Table>
+                <TableHeader className="sticky top-0 z-10 bg-card shadow-[0_1px_0_0_hsl(var(--border))]">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Date</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Projects</TableHead>
+                    <TableHead>.rvt files</TableHead>
+                    <TableHead>At risk</TableHead>
+                    <TableHead>Duration</TableHead>
+                    <TableHead></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {history.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center text-sm text-muted-foreground py-8">
+                        No scan history yet.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {history.map(h => {
+                    const isCurrentJob = job?.id === h.id;
+                    return (
+                      <TableRow key={h.id} className={isCurrentJob ? 'bg-primary/5' : ''}>
+                        <TableCell className="text-sm tabular-nums">
+                          {new Date(h.created_at).toLocaleString(undefined, {
+                            month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                          })}
+                          {isCurrentJob && (
+                            <span className="ml-2 text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full font-medium">current</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <StatusBadge status={h.status} />
+                        </TableCell>
+                        <TableCell className="text-sm tabular-nums">{h.total_projects || '—'}</TableCell>
+                        <TableCell className="text-sm tabular-nums">{h.total_rvt_files?.toLocaleString() || '—'}</TableCell>
+                        <TableCell className={`text-sm tabular-nums font-medium ${(h.at_risk_count ?? 0) > 0 ? 'text-destructive' : ''}`}>
+                          {h.at_risk_count ?? '—'}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground tabular-nums">
+                          {duration(h.started_at, h.completed_at)}
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+                            disabled={deletingId === h.id || h.status === 'running'}
+                            onClick={() => handleDeleteScan(h.id)}
+                          >
+                            {deletingId === h.id ? '…' : 'Delete'}
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        </div>
+
       </div>
 
       {/* Scan detail dialog */}
@@ -502,7 +537,6 @@ export default function DashboardPage() {
           <DialogHeader>
             <DialogTitle>Scan progress</DialogTitle>
           </DialogHeader>
-
           {job && <ScanDetail job={job} />}
         </DialogContent>
       </Dialog>
@@ -513,59 +547,38 @@ export default function DashboardPage() {
 function ScanDetail({ job }: { job: ScanJob }) {
   const currentPhaseIndex = SCAN_PHASES.indexOf(job.phase ?? 'bootstrap');
   const circumference = 2 * Math.PI * 44;
-
   return (
     <div className="space-y-5">
-      {/* Progress circle + current action */}
       <div className="flex items-center gap-4">
         <div className="relative w-20 h-20 shrink-0">
           <svg className="w-20 h-20 -rotate-90" viewBox="0 0 100 100">
             <circle cx="50" cy="50" r="44" fill="none" stroke="hsl(var(--border))" strokeWidth="6" />
-            <circle
-              cx="50" cy="50" r="44" fill="none"
-              stroke="hsl(var(--primary))" strokeWidth="6"
-              strokeDasharray={circumference}
-              strokeDashoffset={circumference * (1 - (job.overall_pct ?? 0) / 100)}
-              strokeLinecap="round"
-              className="transition-all duration-500"
-            />
+            <circle cx="50" cy="50" r="44" fill="none" stroke="hsl(var(--primary))" strokeWidth="6"
+              strokeDasharray={circumference} strokeDashoffset={circumference * (1 - (job.overall_pct ?? 0) / 100)}
+              strokeLinecap="round" className="transition-all duration-500" />
           </svg>
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <div className="absolute inset-0 flex items-center justify-center">
             <span className="text-xl font-semibold">{job.overall_pct ?? 0}%</span>
           </div>
         </div>
         <div className="min-w-0">
           <p className="text-sm font-medium capitalize">{job.phase} phase</p>
-          <p className="text-xs text-muted-foreground mt-1 leading-snug">
-            {job.current_action ?? 'Initializing…'}
-          </p>
+          <p className="text-xs text-muted-foreground mt-1 leading-snug">{job.current_action ?? 'Initializing…'}</p>
           {job.eta_seconds != null && (
-            <p className="text-xs text-primary mt-1.5 font-medium">
-              ~{Math.ceil(job.eta_seconds / 60)} min remaining
-            </p>
+            <p className="text-xs text-primary mt-1.5 font-medium">~{Math.ceil(job.eta_seconds / 60)} min remaining</p>
           )}
         </div>
       </div>
-
-      {/* Phase stepper */}
       <div className="flex items-center gap-0.5">
         {SCAN_PHASES.filter(p => p !== 'done').map((phase, i) => (
           <div key={phase} className="flex items-center flex-1">
-            <div className={`h-1 flex-1 rounded-full transition-colors ${
-              i < currentPhaseIndex ? 'bg-primary'
-              : i === currentPhaseIndex ? 'bg-primary/50'
-              : 'bg-border'
-            }`} />
-            <span className={`text-[10px] px-0.5 whitespace-nowrap ${
-              i === currentPhaseIndex ? 'text-primary font-medium' : 'text-muted-foreground'
-            }`}>
+            <div className={`h-1 flex-1 rounded-full transition-colors ${i < currentPhaseIndex ? 'bg-primary' : i === currentPhaseIndex ? 'bg-primary/50' : 'bg-border'}`} />
+            <span className={`text-[10px] px-0.5 whitespace-nowrap ${i === currentPhaseIndex ? 'text-primary font-medium' : 'text-muted-foreground'}`}>
               {PHASE_LABELS[phase]}
             </span>
           </div>
         ))}
       </div>
-
-      {/* Counters */}
       <div className="grid grid-cols-2 gap-2">
         {[
           { label: 'Projects scanned', value: `${job.scanned_projects ?? 0} / ${job.total_projects ?? 0}` },
@@ -579,27 +592,18 @@ function ScanDetail({ job }: { job: ScanJob }) {
           </div>
         ))}
       </div>
-
-      {job.status === 'failed' && (
-        <p className="text-xs text-destructive rounded border border-destructive/20 bg-destructive/5 px-3 py-2">
-          Scan failed. Try running a new scan.
-        </p>
-      )}
     </div>
   );
 }
 
 function KpiCard({ label, value, sub, variant }: {
-  label: string;
-  value: number;
-  sub: string;
+  label: string; value: number; sub: string;
   variant: 'default' | 'danger' | 'warning' | 'info';
 }) {
   const valueClass = variant === 'danger' ? 'text-destructive'
     : variant === 'warning' ? 'text-amber-600'
     : variant === 'info' ? 'text-blue-600'
     : 'text-foreground';
-
   return (
     <div className="rounded-lg border bg-card px-4 py-3">
       <div className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{label}</div>
@@ -615,8 +619,20 @@ function RiskBadge({ risk }: { risk: 'High' | 'Medium' | 'Low' }) {
       risk === 'High' ? 'bg-destructive/10 text-destructive'
       : risk === 'Medium' ? 'bg-amber-100 text-amber-700'
       : 'bg-muted text-muted-foreground border'
-    }`}>
-      {risk}
-    </span>
+    }`}>{risk}</span>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const map: Record<string, { label: string; cls: string }> = {
+    completed: { label: 'Completed', cls: 'bg-green-100 text-green-700' },
+    running:   { label: 'Running',   cls: 'bg-primary/10 text-primary' },
+    failed:    { label: 'Failed',    cls: 'bg-destructive/10 text-destructive' },
+    paused:    { label: 'Paused',    cls: 'bg-amber-100 text-amber-700' },
+    pending:   { label: 'Pending',   cls: 'bg-muted text-muted-foreground' },
+  };
+  const { label, cls } = map[status] ?? { label: status, cls: 'bg-muted text-muted-foreground' };
+  return (
+    <span className={`inline-block text-[10px] font-medium px-2 py-0.5 rounded-full ${cls}`}>{label}</span>
   );
 }
