@@ -1,0 +1,23 @@
+-- Enable pg_cron (must be done in Supabase dashboard under Database → Extensions first)
+-- create extension if not exists pg_cron;
+
+-- Schedule weekly scan trigger every Monday at 9:00 AM UTC
+-- Replace <your-project-ref> with your Supabase project reference ID
+-- select cron.schedule(
+--   'weekly-c4r-scan',
+--   '0 9 * * 1',
+--   $$
+--   select
+--     net.http_post(
+--       url     := 'https://<your-project-ref>.supabase.co/functions/v1/scheduled-scan',
+--       headers := jsonb_build_object(
+--         'Authorization', 'Bearer ' || current_setting('app.supabase_anon_key'),
+--         'Content-Type', 'application/json'
+--       ),
+--       body    := '{}'::jsonb
+--     )
+--   $$
+-- );
+
+-- To enable: uncomment and run the above after enabling pg_cron and pg_net extensions
+-- in Supabase Dashboard → Database → Extensions

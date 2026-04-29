@@ -1,0 +1,256 @@
+
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+.kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 1.5rem; }
+.kpi { background: var(--color-background-secondary); border-radius: var(--border-radius-md); padding: 14px 16px; }
+.kpi-label { font-size: 11px; color: var(--color-text-secondary); font-weight: 500; letter-spacing: 0.04em; margin-bottom: 6px; }
+.kpi-value { font-size: 26px; font-weight: 500; color: var(--color-text-primary); line-height: 1; }
+.kpi-sub { font-size: 11px; color: var(--color-text-tertiary); margin-top: 4px; }
+.kpi.danger .kpi-value { color: var(--color-text-danger); }
+.kpi.warning .kpi-value { color: var(--color-text-warning); }
+.kpi.info .kpi-value { color: var(--color-text-info); }
+
+.charts-row { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-bottom: 1.5rem; }
+.chart-card { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); padding: 16px; }
+.chart-title { font-size: 12px; font-weight: 500; color: var(--color-text-primary); margin-bottom: 4px; }
+.chart-sub { font-size: 11px; color: var(--color-text-tertiary); margin-bottom: 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 10px; font-size: 11px; color: var(--color-text-secondary); }
+.legend-item { display: flex; align-items: center; gap: 5px; }
+.legend-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+
+.section-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 500; color: var(--color-text-tertiary); margin-bottom: 10px; }
+.project-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.project-table th { text-align: left; padding: 6px 10px; font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-text-tertiary); border-bottom: 0.5px solid var(--color-border-tertiary); }
+.project-table td { padding: 9px 10px; border-bottom: 0.5px solid var(--color-border-tertiary); color: var(--color-text-primary); vertical-align: middle; }
+.project-table tr:last-child td { border-bottom: none; }
+.project-table tr:hover td { background: var(--color-background-secondary); }
+.risk-high { background: var(--color-background-danger); color: var(--color-text-danger); font-size: 10px; font-weight: 500; padding: 2px 8px; border-radius: 99px; }
+.risk-med  { background: var(--color-background-warning); color: var(--color-text-warning); font-size: 10px; font-weight: 500; padding: 2px 8px; border-radius: 99px; }
+.risk-low  { background: var(--color-background-secondary); color: var(--color-text-secondary); border: 0.5px solid var(--color-border-secondary); font-size: 10px; font-weight: 500; padding: 2px 8px; border-radius: 99px; }
+.score-bar { height: 4px; border-radius: 99px; background: var(--color-border-tertiary); overflow: hidden; margin-top: 3px; }
+.score-fill { height: 4px; border-radius: 99px; background: var(--color-text-danger); }
+.score-fill.med { background: var(--color-text-warning); }
+.score-fill.low { background: var(--color-border-secondary); }
+.version-badge { display: inline-block; font-size: 10px; font-weight: 500; padding: 2px 7px; border-radius: 4px; font-family: var(--font-mono); }
+.vb-dead { background: var(--color-background-danger); color: var(--color-text-danger); }
+.vb-ok   { background: var(--color-background-success); color: var(--color-text-success); }
+.action-btn { font-size: 11px; color: var(--color-text-info); cursor: pointer; padding: 3px 8px; border: 0.5px solid var(--color-border-info); border-radius: var(--border-radius-md); background: transparent; }
+.action-btn:hover { background: var(--color-background-info); }
+</style>
+
+<div style="padding: 1rem 0;">
+
+<div class="kpi-row">
+  <div class="kpi danger">
+    <div class="kpi-label">Projects at risk</div>
+    <div class="kpi-value">47</div>
+    <div class="kpi-sub">of 312 total · 15%</div>
+  </div>
+  <div class="kpi warning">
+    <div class="kpi-label">Files needing upgrade</div>
+    <div class="kpi-value">284</div>
+    <div class="kpi-sub">of 1,847 .rvt · 15.4%</div>
+  </div>
+  <div class="kpi info">
+    <div class="kpi-label">Members impacted</div>
+    <div class="kpi-value">631</div>
+    <div class="kpi-sub">across at-risk projects</div>
+  </div>
+  <div class="kpi danger">
+    <div class="kpi-label">Days to deadline</div>
+    <div class="kpi-value" id="days-left">—</div>
+    <div class="kpi-sub">May 7, 2026 cutoff</div>
+  </div>
+</div>
+
+<div class="charts-row">
+  <div class="chart-card">
+    <div class="chart-title">Files at risk over time</div>
+    <div class="chart-sub">Weekly scan snapshots — files on deprecated Revit version</div>
+    <div class="legend">
+      <span class="legend-item"><span class="legend-dot" style="background:#E24B4A;"></span>At risk</span>
+      <span class="legend-item"><span class="legend-dot" style="background:#639922;border-radius:50%;"></span>Cleared</span>
+    </div>
+    <div style="position:relative;width:100%;height:160px;">
+      <canvas id="trendChart" role="img" aria-label="Line chart showing files at risk declining over 8 weekly scans from 412 to 284, and cleared files increasing from 0 to 128">Files at risk: 412, 401, 388, 370, 355, 340, 310, 284. Cleared: 0, 11, 24, 42, 57, 72, 102, 128.</canvas>
+    </div>
+  </div>
+  <div class="chart-card">
+    <div class="chart-title">Version distribution</div>
+    <div class="chart-sub">.rvt files by Revit version</div>
+    <div class="legend" style="margin-bottom:8px;">
+      <span class="legend-item"><span class="legend-dot" style="background:#E24B4A;"></span>Deprecated</span>
+      <span class="legend-item"><span class="legend-dot" style="background:#378ADD;"></span>Supported</span>
+    </div>
+    <div style="position:relative;width:100%;height:160px;">
+      <canvas id="distChart" role="img" aria-label="Horizontal bar chart of Revit versions: 2019 32 files, 2020 89 files, 2021 163 files, 2022 241 files, 2023 398 files, 2024 512 files, 2025 412 files">Version distribution from 2019 to 2025.</canvas>
+    </div>
+  </div>
+</div>
+
+<div class="section-label">Priority project list — sorted by risk score</div>
+<div style="background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);overflow:hidden;">
+<table class="project-table">
+  <thead>
+    <tr>
+      <th style="width:28%;">Project</th>
+      <th>Type</th>
+      <th>Risk</th>
+      <th>Priority score</th>
+      <th>Members</th>
+      <th>.rvt at risk</th>
+      <th>Min version</th>
+      <th>Last active</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td style="font-weight:500;">Highrise Tower Phase 2</td>
+      <td><span style="font-size:10px;color:var(--color-text-secondary);">ACC</span></td>
+      <td><span class="risk-high">High</span></td>
+      <td>
+        <div style="font-size:11px;font-weight:500;">94</div>
+        <div class="score-bar"><div class="score-fill" style="width:94%;"></div></div>
+      </td>
+      <td>48</td>
+      <td style="color:var(--color-text-danger);font-weight:500;">23</td>
+      <td><span class="version-badge vb-dead">2020</span></td>
+      <td style="color:var(--color-text-tertiary);">2d ago</td>
+      <td><button class="action-btn">Assign →</button></td>
+    </tr>
+    <tr>
+      <td style="font-weight:500;">Metro Rail Corridor</td>
+      <td><span style="font-size:10px;color:var(--color-text-secondary);">BIM360</span></td>
+      <td><span class="risk-high">High</span></td>
+      <td>
+        <div style="font-size:11px;font-weight:500;">87</div>
+        <div class="score-bar"><div class="score-fill" style="width:87%;"></div></div>
+      </td>
+      <td>61</td>
+      <td style="color:var(--color-text-danger);font-weight:500;">18</td>
+      <td><span class="version-badge vb-dead">2021</span></td>
+      <td style="color:var(--color-text-tertiary);">5d ago</td>
+      <td><button class="action-btn">Assign →</button></td>
+    </tr>
+    <tr>
+      <td style="font-weight:500;">Airport Terminal Reno</td>
+      <td><span style="font-size:10px;color:var(--color-text-secondary);">ACC</span></td>
+      <td><span class="risk-high">High</span></td>
+      <td>
+        <div style="font-size:11px;font-weight:500;">79</div>
+        <div class="score-bar"><div class="score-fill" style="width:79%;"></div></div>
+      </td>
+      <td>34</td>
+      <td style="color:var(--color-text-danger);font-weight:500;">31</td>
+      <td><span class="version-badge vb-dead">2019</span></td>
+      <td style="color:var(--color-text-tertiary);">1d ago</td>
+      <td><button class="action-btn">Assign →</button></td>
+    </tr>
+    <tr>
+      <td style="font-weight:500;">West Campus Science Bldg</td>
+      <td><span style="font-size:10px;color:var(--color-text-secondary);">ACC</span></td>
+      <td><span class="risk-med">Medium</span></td>
+      <td>
+        <div style="font-size:11px;font-weight:500;">54</div>
+        <div class="score-bar"><div class="score-fill med" style="width:54%;"></div></div>
+      </td>
+      <td>22</td>
+      <td style="color:var(--color-text-danger);font-weight:500;">9</td>
+      <td><span class="version-badge vb-dead">2021</span></td>
+      <td style="color:var(--color-text-tertiary);">18d ago</td>
+      <td><button class="action-btn">Assign →</button></td>
+    </tr>
+    <tr>
+      <td style="font-weight:500;">Harbor District Mixed-Use</td>
+      <td><span style="font-size:10px;color:var(--color-text-secondary);">BIM360</span></td>
+      <td><span class="risk-low">Low</span></td>
+      <td>
+        <div style="font-size:11px;font-weight:500;">21</div>
+        <div class="score-bar"><div class="score-fill low" style="width:21%;"></div></div>
+      </td>
+      <td>8</td>
+      <td style="color:var(--color-text-danger);font-weight:500;">4</td>
+      <td><span class="version-badge vb-dead">2021</span></td>
+      <td style="color:var(--color-text-tertiary);">47d ago</td>
+      <td><button class="action-btn">Assign →</button></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const deadline = new Date('2026-05-07');
+const today = new Date();
+const diff = Math.ceil((deadline - today) / 86400000);
+document.getElementById('days-left').textContent = diff > 0 ? diff : 0;
+
+const isDark = matchMedia('(prefers-color-scheme: dark)').matches;
+const gridColor = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)';
+const textColor = isDark ? '#888780' : '#73726c';
+
+new Chart(document.getElementById('trendChart'), {
+  type: 'line',
+  data: {
+    labels: ['Mar 3','Mar 10','Mar 17','Mar 24','Mar 31','Apr 7','Apr 14','Apr 21'],
+    datasets: [
+      {
+        label: 'At risk',
+        data: [412, 401, 388, 370, 355, 340, 310, 284],
+        borderColor: '#E24B4A',
+        backgroundColor: 'rgba(226,75,74,0.08)',
+        borderWidth: 2,
+        pointRadius: 3,
+        fill: true,
+        tension: 0.3,
+        borderDash: [],
+      },
+      {
+        label: 'Cleared',
+        data: [0, 11, 24, 42, 57, 72, 102, 128],
+        borderColor: '#639922',
+        backgroundColor: 'rgba(99,153,34,0.06)',
+        borderWidth: 2,
+        pointRadius: 3,
+        pointStyle: 'circle',
+        fill: true,
+        tension: 0.3,
+        borderDash: [4,3],
+      }
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { grid: { color: gridColor }, ticks: { color: textColor, font: { size: 10 }, maxRotation: 0 } },
+      y: { grid: { color: gridColor }, ticks: { color: textColor, font: { size: 10 } }, beginAtZero: true }
+    }
+  }
+});
+
+new Chart(document.getElementById('distChart'), {
+  type: 'bar',
+  data: {
+    labels: ['2019','2020','2021','2022','2023','2024','2025'],
+    datasets: [{
+      data: [32, 89, 163, 241, 398, 512, 412],
+      backgroundColor: ['#E24B4A','#E24B4A','#E24B4A','#378ADD','#378ADD','#378ADD','#378ADD'],
+      borderRadius: 3,
+      borderSkipped: false,
+    }]
+  },
+  options: {
+    indexAxis: 'y',
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { grid: { color: gridColor }, ticks: { color: textColor, font: { size: 10 } } },
+      y: { grid: { display: false }, ticks: { color: textColor, font: { size: 11 }, font: { family: 'monospace' } } }
+    }
+  }
+});
+</script>

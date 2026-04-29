@@ -1,36 +1,122 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Revit C4R Scanner
 
-## Getting Started
+Identify Revit files on deprecated Collaboration for Revit (C4R) versions across your ACC/BIM 360 hub, prioritize which projects need upgrading, and track remediation progress.
 
-First, run the development server:
+**Context:** Autodesk dropped cloud model access for Revit 2021 and older on May 7, 2026 (30 days after the Revit 2027 release). Each subsequent annual Revit release drops the oldest supported version. This tool handles that rolling deprecation cycle via the `NEXT_PUBLIC_DEPRECATED_BELOW_VERSION` env var.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+---
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Prerequisites
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- Autodesk Platform Services account — free at [aps.autodesk.com](https://aps.autodesk.com)
+- Supabase account — free tier works for most hubs
+- Vercel account — free tier works, Pro recommended for hubs with >500 projects (300s function timeout)
+- ACC Account Admin access on your hub
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+---
 
-## Learn More
+## Setup (~15 minutes)
 
-To learn more about Next.js, take a look at the following resources:
+### 1. Create APS application
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Go to [aps.autodesk.com/myapps](https://aps.autodesk.com/myapps) → **Create App**
+2. Select APIs: **Data Management**, **Model Derivative**, **Construction Cloud Admin**
+3. Set **Callback URL**: `https://your-domain.vercel.app/api/auth/callback`
+4. Save **Client ID** and **Client Secret**
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 2. Create Supabase project
 
-## Deploy on Vercel
+1. New project at [supabase.com](https://supabase.com)
+2. **SQL Editor** → paste `supabase/migrations/001_initial.sql` → Run
+3. Save **Project URL** and **anon key** (Settings → API)
+4. Save **service_role key** (Settings → API → keep this secret)
+5. Enable **Realtime** on `scan_jobs` table (Database → Replication)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### 3. Deploy to Vercel
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/your-org/revit-c4r-scanner)
+
+Set these environment variables in Vercel:
+
+| Variable | Value |
+|---|---|
+| `APS_CLIENT_ID` | From step 1 |
+| `APS_CLIENT_SECRET` | From step 1 |
+| `APS_CALLBACK_URL` | `https://your-domain.vercel.app/api/auth/callback` |
+| `NEXT_PUBLIC_SUPABASE_URL` | From step 2 |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | From step 2 |
+| `SUPABASE_SERVICE_ROLE_KEY` | From step 2 |
+| `NEXT_PUBLIC_DEPRECATED_BELOW_VERSION` | `2022` (update each year) |
+| `NEXT_PUBLIC_DEADLINE_DATE` | `2026-05-07` |
+
+### 4. Provision app in ACC
+
+1. Log into ACC as **Account Admin**
+2. **Account Admin → Apps & Integrations → Add Custom Integration**
+3. Enter your APS **Client ID**
+4. Grant access to your hub
+
+### 5. Run your first scan
+
+1. Open your deployed app
+2. Sign in with your Autodesk account (must be Account Admin)
+3. Select your hub
+4. Click **Run scan**
+
+---
+
+## Scheduled weekly scans (optional)
+
+1. Enable `pg_cron` and `pg_net` extensions in Supabase Dashboard → Database → Extensions
+2. Deploy the Edge Function: `supabase functions deploy scheduled-scan`
+3. Set Edge Function env vars: `APP_URL`, `APP_SERVICE_KEY`
+4. Run `supabase/migrations/002_pg_cron.sql` (uncomment and fill in your project ref)
+
+---
+
+## Rolling deprecation — annual update
+
+Each year when Autodesk releases a new Revit version:
+
+1. Update `NEXT_PUBLIC_DEPRECATED_BELOW_VERSION` in Vercel to the new threshold (e.g., `2023`)
+2. Update `NEXT_PUBLIC_DEADLINE_DATE` to the new cutoff date
+3. Run a new scan — `needs_upgrade` is recomputed from current settings on every scan
+
+---
+
+## Tech stack
+
+| | |
+|---|---|
+| Framework | Next.js 14 App Router |
+| Styling | Tailwind CSS v3 + shadcn/ui |
+| Database | Supabase (Postgres 15, Auth, Realtime) |
+| APS SDK | @aps_sdk/authentication, data-management, construction-account-admin |
+| Charts | Recharts |
+| PDF | @react-pdf/renderer |
+| State | Zustand |
+| Rate limiting | p-limit + p-retry |
+| Deployment | Vercel |
+
+---
+
+## Privacy & security
+
+- Your Autodesk credentials are **never stored** in the database
+- OAuth tokens are kept only in **secure, httpOnly browser cookies** (session only, ~1 hour)
+- All project data is stored in **your own Supabase instance**
+- No data is shared with any third party
+- `SUPABASE_SERVICE_ROLE_KEY` is **never** exposed to client-side code
+
+---
+
+## Version detection methods
+
+| Method | Coverage | Cost |
+|---|---|---|
+| `dm_extension` | C4R cloud models (most files) | Free — inline with folder traversal |
+| `manifest` | Files translated after Nov 2021 | ~200ms per file, no download |
+| `binary_header` | Pre-2024 local/uploaded files | 4KB range download |
+| `unknown` | Files that exhaust all methods | Treated conservatively as at-risk |
+
+> **Note:** Binary header parsing is unreliable for Revit 2024+ due to internal file format changes. Files detected as `unknown` are flagged for manual review in the dashboard.
