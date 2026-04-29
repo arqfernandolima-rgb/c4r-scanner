@@ -14,7 +14,7 @@ export function buildAuthorizeUrl(challenge: string, state: string): string {
     response_type: 'code',
     client_id: process.env.APS_CLIENT_ID!,
     redirect_uri: process.env.APS_CALLBACK_URL!,
-    scope: 'data:read account:read',
+    scope: 'data:read account:read openid user-profile:read',
     code_challenge: challenge,
     code_challenge_method: 'S256',
     state,
@@ -59,14 +59,14 @@ export async function getUserInfo(token: string): Promise<{
   email: string;
   userId: string;
 }> {
-  const res = await fetch('https://developer.api.autodesk.com/userprofile/v1/users/@me', {
+  const res = await fetch('https://developer.api.autodesk.com/oidc/userinfo', {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (!res.ok) throw new Error('Failed to fetch user info');
+  if (!res.ok) throw Object.assign(new Error('Failed to fetch user info'), { status: res.status });
   const data = await res.json();
   return {
-    name: `${data.firstName ?? ''} ${data.lastName ?? ''}`.trim(),
-    email: data.emailId ?? '',
-    userId: data.userId ?? '',
+    name: `${data.given_name ?? ''} ${data.family_name ?? ''}`.trim() || (data.name ?? ''),
+    email: data.email ?? '',
+    userId: data.sub ?? '',
   };
 }

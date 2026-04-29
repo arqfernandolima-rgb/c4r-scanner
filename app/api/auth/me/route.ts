@@ -9,7 +9,11 @@ export async function GET() {
   try {
     const user = await getUserInfo(token);
     return NextResponse.json(user);
-  } catch {
+  } catch (err: unknown) {
+    const status = (err as { status?: number }).status;
+    if (status === 401 || status === 403) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
     return NextResponse.json({ error: 'Failed to fetch user info' }, { status: 500 });
   }
 }
