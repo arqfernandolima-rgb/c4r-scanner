@@ -65,18 +65,22 @@ export async function getUserInfo(token: string): Promise<{
   email: string;
   userId: string;
 }> {
-  const res = await fetch('https://developer.api.autodesk.com/profile/v2/userinfo', {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    console.error(`getUserInfo failed ${res.status}:`, body);
-    throw Object.assign(new Error('Failed to fetch user info'), { status: res.status });
+  // APS access tokens are RS256 JWTs — decode payload locally to avoid broken userinfo endpoints
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) throw new Error('Not a JWT');
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8'));
+    const userId: string = payload.sub ?? payload.userid ?? '';
+    const name: string =
+      (`${payload.given_name ?? ''} ${payload.family_name ?? ''}`.trim()) ||
+      (payload.name ?? '') ||
+      (payload.preferred_username ?? '') ||
+      '';
+    const email: string = payload.email ?? '';
+    if (!userId) throw new Error('No sub claim in JWT payload');
+    return { name, email, userId };
+  } catch (err) {
+    console.error('[getUserInfo] JWT decode failed:', err);
+    throw Object.assign(new Error('Failed to decode user info from token'), { status: 401 });
   }
-  const data = await res.json();
-  return {
-    name: `${data.given_name ?? ''} ${data.family_name ?? ''}`.trim() || (data.name ?? ''),
-    email: data.email ?? '',
-    userId: data.sub ?? '',
-  };
 }
