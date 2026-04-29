@@ -23,19 +23,19 @@ export async function GET(req: NextRequest) {
   try {
     const tokenData = await exchangeCodeForToken(code, verifier);
 
-    cookieStore.set('aps_token', tokenData.access_token, {
+    const response = NextResponse.redirect(new URL('/', req.url));
+
+    response.cookies.set('aps_token', tokenData.access_token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      sameSite: 'lax',
       path: '/',
       maxAge: tokenData.expires_in,
     });
+    response.cookies.delete('pkce_verifier');
+    response.cookies.delete('pkce_state');
 
-    // Clear PKCE cookies
-    cookieStore.delete('pkce_verifier');
-    cookieStore.delete('pkce_state');
-
-    return NextResponse.redirect(new URL('/dashboard', req.url));
+    return response;
   } catch {
     return NextResponse.redirect(new URL('/?error=token_exchange_failed', req.url));
   }
